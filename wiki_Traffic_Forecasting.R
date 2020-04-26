@@ -1,9 +1,8 @@
 
-###########################################
-
-
-
-##########################################
+##################################################################
+# Forecasting the traffic for Wikipedia Web Page
+# Data Time Frame :- July, 1st, 2015 up until December 31st, 2016
+##################################################################
 
 # Clear all the variables in workspace
 rm(list = ls())
@@ -17,16 +16,181 @@ require(forecast)
 require(xts)
 require(tseries)
 require(graphics)
-require(dplyr)
-require(ggplot2)
+#require(dplyr)
+#require(ggplot2)
+require(tidyverse)
+library(stringr)
+library(plotly)
+library(parallel)
+pacman::p_load(wordcloud,corpus) # textmining
 
-#require(prophet)
 
 # Setting the working drectory
 setwd('D:\\github\\dataSets\\kaggle\\web_traffic_forecasting\\')
 
 # Load the data
 train <- fread("train_1.csv")
+
+
+#####################################
+# Data Exploration and Visulizations
+#####################################
+
+############## Sampling the Data #########################
+
+# Here I sampled the train data to 1/10 of all wiki Pages for faster runtime, 
+# And will later iterate through each sample for the analysis. 
+# This time we will analyze only the language specific projects and but drop the ones that belong to wiki media.
+
+set.seed(1234)
+
+sample_wiki <- train %>% # we use the full sample now
+  filter(!(grepl('www.mediawiki.org',Page))) %>%
+  sample_frac(0.1) %>%
+  gather(Date, Visit, -Page) %>% data.table
+
+################ Accessing the hidden data (Feature Enginering) #################
+
+# extract name, project, access, agent from Page
+name = mclapply(str_split(sample_wiki$Page,pattern = "_"),
+                function(x) head(x,length(x)-3))
+name = mclapply(name, function(x) paste(x,collapse = ' '))
+
+page_split <- mclapply(str_split(sample_wiki$Page,pattern = "_"), 
+                       function(x) tail(x,3)) 
+add <- data.table(Project= unlist(mclapply(page_split, function(x) x[1])),
+                  Access= unlist(mclapply(page_split, function(x) x[2])),
+                  Agent= unlist(mclapply(page_split, function(x) x[3])),
+                  Name = unlist(name))
+
+sample_wiki <- cbind(sample_wiki, add)
+head(sample_wiki)[,-1]
+
+######################### Missing Values by Groups ##########################
+
+# Count percentage of missing values by Project
+table(sample_wiki[is.na(Visit), Project])/table(sample_wiki[, Project])
+
+# let's treat the missing values from Visits as 0. 
+# We are unsure if they should be treated as zero visits to a Page on a specific day or maybe something happend on the server end and failed to update numbers. 
+# Either way we need to somehow imply that similar patterns can be applied in the future.
+
+sample_wiki <- replace_na(sample_wiki,list(Visit = 0))
+
+############################ Feature ENgineering ##########################
+
+sample_wiki <- sample_wiki %>% 
+  mutate(Date = as.Date(Date,format="%Y-%m-%d"),
+         Year = year(Date),
+         Month = month(Date),
+         Visit_m = Visit/1000000)
+
+########################## Exploration ########################
+
+# calculate average monthly visits
+p_month <- sample_wiki %>%
+  mutate(year_month = format(Date, "%Y-%m")) %>%
+  group_by(year_month, Project) %>%
+  summarise(Visit = mean(Visit)) %>%
+  ggplot(aes(year_month, Visit)) + 
+  geom_bar(stat = 'identity', aes(fill = Project)) + 
+  theme_classic(base_size = 12,base_family = 'mono') + 
+  ylab('Number of Visits') + xlab('Year - Month') + ggtitle('Average Monthly Wikipedia Traffic')
+ggplotly(p_month)
+
+
+# Visualize the sample data, by Project
+p_proj <- sample_wiki %>%
+  group_by(Date,Project) %>%
+  summarise(Visit_m = sum(Visit_m)) %>%
+  ggplot(aes(Date, Visit_m)) + 
+  geom_line(aes(color = Project), size = 0.3) + 
+  # facet_grid(~Project,scales = 'free_y',shrink = F) + 
+  theme_classic(base_size = 12,base_family = 'mono') +
+  theme(legend.position = 'top') +
+  ggtitle('Traffic in Wikipedia by Projects') +
+  ylab('Visit in Millions')
+ggplotly(p_proj)
+
+# Visualize by Access
+p_access <- sample_wiki %>%
+  group_by(Date,Access) %>%
+  summarise(Visit_m = sum(Visit_m)) %>%
+  ggplot(aes(Date, Visit_m)) + 
+  geom_line(aes(color = Access)) + 
+  theme_classic(base_size = 12,base_family = 'mono') + 
+  ggtitle('Taffic by Access') +
+  ylab('Visit in Millions')
+ggplotly(p_access)
+
+# summarize by Project, pick the top 1 of all time
+top_1_proj <- sample_wiki %>%
+  group_by(Project, Name) %>%
+  summarise(Visit = sum(Visit)) %>%
+  top_n(1, Visit) %>% data.table
+top_1_proj
+
+#From the summary above, I see that pages with keyword Special: is the most visited from the English wiki project, 
+# And have reached more than 1 billion in 500 days. 
+# This is worth noticing and could be a potential outlier.
+
+# summarize by project and year, top 1
+top_1_proj_yr <- sample_wiki %>%
+  group_by(Project, Year, Name) %>%
+  summarise(Visit = sum(Visit)) %>%
+  top_n(1, Visit) %>%
+  spread(Year,Visit) %>% data.table
+top_1_proj_yr
+
+################# Word CLoud ###########################
+
+wc <- sample_wiki %>% 
+  group_by(Project, Year, Name) %>%
+  summarise(Visit = sum(Visit)) %>% data.table
+
+wc_en <- wc[grepl('en',Project) & !grepl(Name,pattern = c('Special:'))]
+wc_en_15 <- wc_en[Year == 2015]
+wc_en_16 <- wc_en[Year == 2016]
+
+# 2015
+set.seed(1234)
+wordcloud(words = wc_en_15$Name, freq = wc_en_15$Visit, min.freq = 1,
+          max.words=round(nrow(wc_en_15)*0.1,0), random.order=FALSE, rot.per=0.35,
+          colors=brewer.pal(8, "Dark2")
+          # random.color = F
+)
+
+# 2016
+set.seed(1234)
+wordcloud(words = wc_en_16$Name, freq = wc_en_16$Visit, min.freq = 1,
+          max.words = round(nrow(wc_en_16)*0.1,0), random.order=FALSE, rot.per=0.35,
+          colors=brewer.pal(8, "Dark2")
+          # random.color = F
+)
+
+# 2015
+top_10_en_15 <- top_n(wc_en_15, 10,Visit) %>% select(Name)
+# time trend by the top phrases
+sample_wiki %>% 
+  filter(Name %in% top_10_en_15$Name,
+         Year == 2015) %>%
+  ggplot() + 
+  geom_bar(aes(x= Date,y = Visit_m), stat = 'identity', fill = 'red',alpha = 0.7) +
+  facet_wrap(~Name, scales = 'fixed',nrow = 5) +
+  theme_classic(base_size = 12,base_family = 'mono') + ylab('Visit in Millions') +
+  ggtitle('Top 10 Visited Pages in 2015')
+
+# 2016
+top_10_en_16 <- top_n(wc_en_16, 10,Visit) %>% select(Name)
+# time trend by the top phrases
+sample_wiki %>% 
+  filter(Name %in% top_10_en_16$Name,
+         Year == 2016) %>%
+  ggplot() + 
+  geom_bar(aes(x= Date,y = Visit_m), fill = 'red', alpha = 0.7, stat = 'identity') +
+  facet_wrap(~Name, scales = 'free_y', nrow = 5) +
+  theme_classic(base_size = 12,base_family = 'mono') + ylab('Visit in Millions') +
+  ggtitle('Top 10 Visited Pages in 2016')
 
 #######################################
 # Data Pre-Processing and Explorations
@@ -65,16 +229,6 @@ f$d = as.POSIXct(f$d, format="%Y-%m-%d")
 
 t2_xts = xts(f$f, order.by = f$d)
 t2_xts = t2_xts/1000
-
-###############################
-# Data Exploration
-##############################
-
-# Here I sampled the train data to 1/10 of all wiki Pages for faster runtime, 
-# And will later iterate through each sample for the analysis. 
-# This time we will analyze only the language specific projects and but drop the ones that belong to wiki media.
-
-
 
 
 ################################
@@ -405,60 +559,78 @@ autoplot(cbind(ts(forecastValue$actuals),
 
 ### from the graph we can conclude that TBATS have perform better than the other model.
 
-################
-# Auto Arima
-################
+################### Coomparing absolute errors ###################
 
-####################### fitting and forecasting ##############
+errors <- c(tbats.abs.error,bats.abs.error,stlm.abs.error,arima.abs.error)
+models <- c('TBATS','BATS','STLM','ARIMA')
 
-tbats.model = auto.arima(y_2,stepwise = F,approximation = F,trace = T)
-print(summary(tbats.model))
-checkresiduals(tbats.model)
+df.error <- data.frame(models,errors)
 
-# forecasting the values
-tbats.forecast = forecast(tbats.model,h=31)
-
-# Visulization
-autoplot(tbats.forecast) + 
-  ggtitle('Forecasting the wikipedia Page for the next month(TBATS)') +
-  ylab('Views (K)') +
-  xlab("Days")
+ggplot(data=df.error, aes(x=models, y=errors, group=1)) +
+  geom_line(linetype='solid',color='darkgray',size=1.5)+
+  geom_point(size=2) +
+  geom_text(aes(label = round(errors, 3)),
+            vjust = "outward", hjust = "outward",
+            show.legend = FALSE)
+  
 
 
-#Lets check on accuracy part 
-accuracy(tbats.forecast$mean,t2_te$f) 
 
-#              ME    RMSE     MAE      MPE     MAPE
-#Test set 2997230 3423985 3045547 12.13825 12.39839
-
-###################### Absolute Error ################################
-
-#In real life absolute error rate may add more value to business.
-tbatforecast = data.frame(t2_te$d,t2_te$f,tbats.forecast$mean)
-colnames(tbatforecast) = c("d","actuals","tbats.forecast")
-
-tbats.abs.error = abs(sum(tbatforecast$actuals)-sum(tbatforecast$tbats.forecast))/sum(tbatforecast$actuals)
-tbats.abs.error
-
-#0.1271615 - TBATS have performed approximatly 12% of error. 
-
-############################# Prediction vs Actual Values ####################
-
-#Lets have a look on the error
-autoplot(cbind(tbatforecast$actuals, tbatforecast$tbats.forecast)) +
-  ggtitle('TBATS Forecasted values vs Actual Values') +
-  ylab('Views (in K)') +
-  guides(fill=F) +
-  labs(colour='Forecasting') +
-  scale_colour_manual(labels=c('actual','forecasted'),values = c(1,2))
-
-## From the graph we can see that the model was able to capture the seasonality but not the peaks. 
-## Lets explore and confirm on residuals
-
-tbatforecast$Residual = abs(tbatforecast$actuals - tbatforecast$tbats.forecast)
-
-autoplot.zoo(tbatforecast$Residual) +
-  ylab('Residuals')
-## by residual plot we confirm that the model is not able to predict the peak values.
-## Lets have the TBATS as the bench mark.
-
+# 
+# ################
+# # Auto Arima
+# ################
+# 
+# ####################### fitting and forecasting ##############
+# 
+# tbats.model = auto.arima(y_2,stepwise = F,approximation = F,trace = T)
+# print(summary(tbats.model))
+# checkresiduals(tbats.model)
+# 
+# # forecasting the values
+# tbats.forecast = forecast(tbats.model,h=31)
+# 
+# # Visulization
+# autoplot(tbats.forecast) + 
+#   ggtitle('Forecasting the wikipedia Page for the next month(TBATS)') +
+#   ylab('Views (K)') +
+#   xlab("Days")
+# 
+# 
+# #Lets check on accuracy part 
+# accuracy(tbats.forecast$mean,t2_te$f) 
+# 
+# #              ME    RMSE     MAE      MPE     MAPE
+# #Test set 2997230 3423985 3045547 12.13825 12.39839
+# 
+# ###################### Absolute Error ################################
+# 
+# #In real life absolute error rate may add more value to business.
+# tbatforecast = data.frame(t2_te$d,t2_te$f,tbats.forecast$mean)
+# colnames(tbatforecast) = c("d","actuals","tbats.forecast")
+# 
+# tbats.abs.error = abs(sum(tbatforecast$actuals)-sum(tbatforecast$tbats.forecast))/sum(tbatforecast$actuals)
+# tbats.abs.error
+# 
+# #0.1271615 - TBATS have performed approximatly 12% of error. 
+# 
+# ############################# Prediction vs Actual Values ####################
+# 
+# #Lets have a look on the error
+# autoplot(cbind(tbatforecast$actuals, tbatforecast$tbats.forecast)) +
+#   ggtitle('TBATS Forecasted values vs Actual Values') +
+#   ylab('Views (in K)') +
+#   guides(fill=F) +
+#   labs(colour='Forecasting') +
+#   scale_colour_manual(labels=c('actual','forecasted'),values = c(1,2))
+# 
+# ## From the graph we can see that the model was able to capture the seasonality but not the peaks. 
+# ## Lets explore and confirm on residuals
+# 
+# tbatforecast$Residual = abs(tbatforecast$actuals - tbatforecast$tbats.forecast)
+# 
+# autoplot.zoo(tbatforecast$Residual) +
+#   ylab('Residuals')
+# ## by residual plot we confirm that the model is not able to predict the peak values.
+# ## Lets have the TBATS as the bench mark.
+# 
