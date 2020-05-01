@@ -450,11 +450,6 @@ stlm.abs.error
 
 ############################# Prediction vs Actual Values ####################
 
-#Lets have a look on the error 
-plot.zoo(cbind(forecastValue$actuals, forecastValue$stlm.forecast), 
-         plot.type = "single", 
-         col = c("red", "blue"))
-
 autoplot(cbind(forecastValue$actuals, forecastValue$stlm.forecast)) +
   ggtitle('STLM Forecasted values vs Actual Values') +
   ylab('Views (in K)') +
@@ -571,7 +566,8 @@ ggplot(data=df.error, aes(x=models, y=errors, group=1)) +
   geom_point(size=2) +
   geom_text(aes(label = round(errors, 3)),
             vjust = "outward", hjust = "outward",
-            show.legend = FALSE)
+            show.legend = FALSE) +
+  ggtitle('Absolute Error across Models')
   
 
 
