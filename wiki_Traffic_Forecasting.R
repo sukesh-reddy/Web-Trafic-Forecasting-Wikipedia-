@@ -123,6 +123,7 @@ p_access <- sample_wiki %>%
   ylab('Visit in Millions')
 ggplotly(p_access)
 
+
 # summarize by Project, pick the top 1 of all time
 top_1_proj <- sample_wiki %>%
   group_by(Project, Name) %>%
@@ -292,6 +293,38 @@ y_2 <- msts(t2_tr$f, seasonal.periods=c(7,4.34*7))
 
 autoplot(stl(y_2,s.window="periodic",robust=TRUE))
 #plot clearly showed the seasonal and trend part.
+
+
+##########################
+# Basic Approach 
+# Simple Model with the average of activity by weekdays
+#########################
+
+avg.wday <- t2_tr %>%
+            mutate(week_day = wday(d)) %>%
+            column_to_rownames(.,var='d') %>%
+            group_by(week_day) %>%
+            summarise(views = median(f))
+
+pred.values <- t2_te %>%
+              mutate(week_day = wday(d))
+
+model.values <- merge(avg.wday,pred.values,by='week_day',all=T) %>% arrange(d)
+
+# Absolute Error
+simplemodel.abs.error = abs(sum(model.values$f)-sum(model.values$views))/sum(model.values$f)
+
+# comparing Errors
+ggplot(data=model.values) +
+  geom_line(mapping = aes(x=d,y=f),color='blue') +
+  geom_line(mapping = aes(x=d,y=views),color='red') +
+  ggtitle('Simple Averaing weekdays Forecasted values vs Actual Values') +
+  ylab('Views (in K)') +
+  guides(fill=F) +
+  labs(colour='Forecasting') +
+  scale_colour_manual(labels=c('actual','forecasted'),values = c(1,2))
+
+# 0.19102 - abs error
 
 ######################################
 # Modelling - 4 tpyes
@@ -537,6 +570,15 @@ autoplot(cbind(forecastValue$actuals, forecastValue$arima.forecast)) +
 arimaResidual = abs(forecastValue$actuals - forecastValue$arima.forecast)
 autoplot.zoo(arimaResidual)
 
+########################
+# Ensemble
+#######################
+
+forecasted.values <- 0.8* tbats.forecast$mean + 0.2 * bats.forecast$mean
+forecastValue = data.frame(t2_te$d,t2_te$f,forecasted.values)
+colnames(forecastValue) = c("d","actuals","ensemble.forecast")
+ensemble.abs.error = abs(sum(forecastValue$actuals,na.rm = T)-sum(forecastValue$ensemble.forecast,na.rm = T))/sum(forecastValue$actuals,na.rm = T)
+
 #############################
 # Model Evaluation
 ##############################
@@ -556,10 +598,10 @@ autoplot(cbind(ts(forecastValue$actuals),
 
 ################### Coomparing absolute errors ###################
 
-errors <- c(tbats.abs.error,bats.abs.error,stlm.abs.error,arima.abs.error)
-models <- c('TBATS','BATS','STLM','ARIMA')
+errors <- c(tbats.abs.error,bats.abs.error,stlm.abs.error,arima.abs.error,simplemodel.abs.error,ensemble.abs.error)
+models <- c('TBATS','BATS','STLM','ARIMA','Simple Model','Ensemble')
 
-df.error <- data.frame(models,errors)
+df.error <- data.frame(models,errors) %>% arrange(errors)
 
 ggplot(data=df.error, aes(x=models, y=errors, group=1)) +
   geom_line(linetype='solid',color='darkgray',size=1.5)+
@@ -571,62 +613,3 @@ ggplot(data=df.error, aes(x=models, y=errors, group=1)) +
   
 
 
-
-# 
-# ################
-# # Auto Arima
-# ################
-# 
-# ####################### fitting and forecasting ##############
-# 
-# tbats.model = auto.arima(y_2,stepwise = F,approximation = F,trace = T)
-# print(summary(tbats.model))
-# checkresiduals(tbats.model)
-# 
-# # forecasting the values
-# tbats.forecast = forecast(tbats.model,h=31)
-# 
-# # Visulization
-# autoplot(tbats.forecast) + 
-#   ggtitle('Forecasting the wikipedia Page for the next month(TBATS)') +
-#   ylab('Views (K)') +
-#   xlab("Days")
-# 
-# 
-# #Lets check on accuracy part 
-# accuracy(tbats.forecast$mean,t2_te$f) 
-# 
-# #              ME    RMSE     MAE      MPE     MAPE
-# #Test set 2997230 3423985 3045547 12.13825 12.39839
-# 
-# ###################### Absolute Error ################################
-# 
-# #In real life absolute error rate may add more value to business.
-# tbatforecast = data.frame(t2_te$d,t2_te$f,tbats.forecast$mean)
-# colnames(tbatforecast) = c("d","actuals","tbats.forecast")
-# 
-# tbats.abs.error = abs(sum(tbatforecast$actuals)-sum(tbatforecast$tbats.forecast))/sum(tbatforecast$actuals)
-# tbats.abs.error
-# 
-# #0.1271615 - TBATS have performed approximatly 12% of error. 
-# 
-# ############################# Prediction vs Actual Values ####################
-# 
-# #Lets have a look on the error
-# autoplot(cbind(tbatforecast$actuals, tbatforecast$tbats.forecast)) +
-#   ggtitle('TBATS Forecasted values vs Actual Values') +
-#   ylab('Views (in K)') +
-#   guides(fill=F) +
-#   labs(colour='Forecasting') +
-#   scale_colour_manual(labels=c('actual','forecasted'),values = c(1,2))
-# 
-# ## From the graph we can see that the model was able to capture the seasonality but not the peaks. 
-# ## Lets explore and confirm on residuals
-# 
-# tbatforecast$Residual = abs(tbatforecast$actuals - tbatforecast$tbats.forecast)
-# 
-# autoplot.zoo(tbatforecast$Residual) +
-#   ylab('Residuals')
-# ## by residual plot we confirm that the model is not able to predict the peak values.
-# ## Lets have the TBATS as the bench mark.
-# 
