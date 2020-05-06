@@ -326,8 +326,31 @@ ggplot(data=model.values) +
 
 # 0.19102 - abs error
 
+##############################33
+# Linear Regression
+###############################
+model <- lm(f~d,t2_tr)
+
+summary(model)
+
+pred.values <- predict(model,t2_te)
+
+linear.abs.error = abs(sum(t2_te$f)-sum(pred.values,na.rm = T))/sum(t2_te$f)
+# 0.180
+
+df <- data.frame(actual = t2_te$f,predicted = pred.values,date=t2_te$d)
+
+ggplot(data=df) +
+  geom_line(mapping = aes(x=date,y=actual),color='blue') +
+  geom_line(mapping = aes(x=date,y=predicted),color='red') +
+  ggtitle('Linear Regression Forecasted values vs Actual Values') +
+  ylab('Views (in K)') +
+  guides(fill=F) +
+  labs(colour='Forecasting') +
+  scale_colour_manual(labels=c('actual','forecasted'),values = c(1,2))
+
 ######################################
-# Modelling - 4 tpyes
+# Forecasting Modelling - 4 tpyes
 # TBATS, BATS, ARIMA, STLM
 #####################################
 
@@ -574,11 +597,24 @@ autoplot.zoo(arimaResidual)
 # Ensemble
 #######################
 
+# Averaging the mdels
 forecasted.values <- 0.8* tbats.forecast$mean + 0.2 * bats.forecast$mean
-forecastValue = data.frame(t2_te$d,t2_te$f,forecasted.values)
-colnames(forecastValue) = c("d","actuals","ensemble.forecast")
-ensemble.abs.error = abs(sum(forecastValue$actuals,na.rm = T)-sum(forecastValue$ensemble.forecast,na.rm = T))/sum(forecastValue$actuals,na.rm = T)
 
+# Predicting the test data
+forecastValue.ensemble = data.frame(t2_te$d,t2_te$f,forecasted.values)
+colnames(forecastValue.ensemble) = c("d","actuals","ensemble.forecast")
+
+# absolute Error
+ensemble.abs.error = abs(sum(forecastValue.ensemble$actuals,na.rm = T)-sum(forecastValue.ensemble$ensemble.forecast,na.rm = T))/sum(forecastValue.$actuals,na.rm = T)
+#0.137732 
+
+# Visulizing the actual vs predicted values
+autoplot(cbind(forecastValue$actuals, forecastValue.ensemble$ensemble.forecast)) +
+  ggtitle('Ensemble Forecasted values vs Actual Values') +
+  ylab('Views (in K)') +
+  guides(fill=F) +
+  labs(colour='Forecasting') +
+  scale_colour_manual(labels=c('actual','forecasted'),values = c(1,2))
 #############################
 # Model Evaluation
 ##############################
@@ -587,21 +623,24 @@ autoplot(cbind(ts(forecastValue$actuals),
                ts(forecastValue$tbats.forecast),
                ts(forecastValue$bats.forecast),
                ts(forecastValue$stlm.forecast),
-               ts(forecastValue$arima.forecast))) +
-  ggtitle('All 4 model Forecasted values vs Actual Values') +
+               ts(forecastValue$arima.forecast),
+               ts(pred.values),
+               ts(model.values$views),
+               ts(forecastValue.ensemble$ensemble.forecast))) +
+  ggtitle('All 7 model Forecasted values vs Actual Values') +
   ylab('Views (in K)') +
   guides(fill=F) +
   labs(colour='Forecasting') +
-  scale_colour_manual(labels=c('actual','TBATS','BATS','STLM','ARIMA'),values = c(1,2,3,4,5))
+  scale_colour_manual(labels=c('actual','TBATS','BATS','STLM','ARIMA','LR','Simple Model','Ensemble'),values = c(1,2,3,4,5,6,7,8))
 
 ### from the graph we can conclude that TBATS have perform better than the other model.
 
 ################### Coomparing absolute errors ###################
 
-errors <- c(tbats.abs.error,bats.abs.error,stlm.abs.error,arima.abs.error,simplemodel.abs.error,ensemble.abs.error)
-models <- c('TBATS','BATS','STLM','ARIMA','Simple Model','Ensemble')
+errors <- c(tbats.abs.error,bats.abs.error,stlm.abs.error,arima.abs.error,simplemodel.abs.error,ensemble.abs.error,linear.abs.error)
+models <- c('TBATS','BATS','STLM','ARIMA','Simple Model','Ensemble','Linear Model')
 
-df.error <- data.frame(models,errors) %>% arrange(errors)
+df.error <- data.frame(models,errors) %>% arrange(desc(errors))
 
 ggplot(data=df.error, aes(x=models, y=errors, group=1)) +
   geom_line(linetype='solid',color='darkgray',size=1.5)+
@@ -611,5 +650,4 @@ ggplot(data=df.error, aes(x=models, y=errors, group=1)) +
             show.legend = FALSE) +
   ggtitle('Absolute Error across Models')
   
-
 
